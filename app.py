@@ -20,146 +20,137 @@ def analyze_code(code):
 
     lines = code.split("\n")
 
-    # ==================================================
-    # PROCEDURE + ALGORITHM CHECK
-    # ==================================================
-    functions = re.findall(r"def\s+(\w+)\((.*?)\):", code)
+    # ============================
+    # FUNCTION DETECTION
+    # ============================
+    functions = []
+    for i, line in enumerate(lines):
+        match = re.match(r"\s*def\s+(\w+)\((.*?)\):", line)
+        if match:
+            functions.append({
+                "name": match.group(1),
+                "params": match.group(2).strip(),
+                "line": i + 1
+            })
 
-    selected_function = None
+    if not functions:
+        results["procedure"].append(("⚠ No functions detected using 'def'.", "warning"))
+        return results
 
-    # Choose first function that has at least one parameter
-    for name, params in functions:
-        if params.strip():
-            selected_function = (name, params)
-            break
+    for func in functions:
+        name = func["name"]
+        params = func["params"]
+        line_number = func["line"]
 
-    if selected_function:
-        function_name, parameters = selected_function
         results["procedure"].append(
-            (f"✔ Procedure detected: {function_name}", "success")
+            (f"✔ Function '{name}' detected on line {line_number}", "success")
         )
 
-        param_name = parameters.split(",")[0].strip()
+        if params:
+            results["procedure"].append(
+                (f"✔ Function '{name}' has parameter(s): {params}", "success")
+            )
+        else:
+            results["procedure"].append(
+                (f"⚠ Function '{name}' has NO parameters.", "warning")
+            )
 
-        # Extract function body using indentation
-        function_start = None
-        for i, line in enumerate(lines):
-            if line.strip().startswith(f"def {function_name}"):
-                function_start = i
-                break
+        # Extract function body
+        start_index = line_number - 1
+        indent_level = len(lines[start_index]) - len(lines[start_index].lstrip())
+        body_lines = []
 
-        indent_level = len(lines[function_start]) - len(lines[function_start].lstrip())
-        function_body = []
-
-        for line in lines[function_start + 1:]:
+        for line in lines[start_index + 1:]:
             if line.strip() == "":
                 continue
             current_indent = len(line) - len(line.lstrip())
             if current_indent > indent_level:
-                function_body.append(line)
+                body_lines.append(line)
             else:
                 break
 
-        # Parameter usage
-        if any(param_name in line for line in function_body):
-            results["procedure"].append(
-                ("✔ Parameter is used inside the procedure", "success")
-            )
-        else:
-            results["procedure"].append(
-                ("⚠ Parameter is not used inside the procedure. The parameter must affect the algorithm.", "warning")
-            )
+        # Check for parameter usage
+        if params:
+            param_name = params.split(",")[0].strip()
+            if any(param_name in line for line in body_lines):
+                results["procedure"].append(
+                    (f"✔ Parameter '{param_name}' is used inside '{name}'", "success")
+                )
+            else:
+                results["procedure"].append(
+                    (f"⚠ Parameter '{param_name}' is NOT used inside '{name}'", "warning")
+                )
 
-        # Check if procedure is called
-        call_pattern = rf"{function_name}\("
-        call_count = len(re.findall(call_pattern, code))
+        # Algorithm checks inside function
+        has_if = False
+        has_loop = False
 
-        if call_count > 1:
-            results["procedure"].append(
-                ("✔ Procedure is called in the program", "success")
-            )
-        else:
-            results["procedure"].append(
-                ("⚠ Procedure is defined but not called.", "warning")
-            )
+        for idx, line in enumerate(body_lines):
+            if "if " in line:
+                has_if = True
+                results["algorithm"].append(
+                    (f"✔ Selection found in '{name}' on line {start_index + idx + 2}", "success")
+                )
+            if "for " in line or "while " in line:
+                has_loop = True
+                results["algorithm"].append(
+                    (f"✔ Loop found in '{name}' on line {start_index + idx + 2}", "success")
+                )
 
-        # Algorithm checks (must be inside same procedure)
-        has_if = any("if " in line for line in function_body)
-        has_loop = any("for " in line or "while " in line for line in function_body)
-
-        if has_if:
+        if not has_if:
             results["algorithm"].append(
-                ("✔ Selection (if/elif/else) detected inside procedure", "success")
-            )
-        else:
-            results["algorithm"].append(
-                ("⚠ No selection detected inside procedure. Your algorithm must include an if/else structure.", "warning")
+                (f"⚠ No selection (if/elif/else) found inside '{name}'", "warning")
             )
 
-        if has_loop:
+        if not has_loop:
             results["algorithm"].append(
-                ("✔ Iteration (for/while) detected inside procedure", "success")
-            )
-        else:
-            results["algorithm"].append(
-                ("⚠ No iteration detected inside procedure. Your algorithm must include a loop.", "warning")
+                (f"⚠ No loop (for/while) found inside '{name}'", "warning")
             )
 
-    else:
-        results["procedure"].append(
-            ("⚠ No valid procedure with at least one parameter detected.", "warning")
-        )
-
-    # ==================================================
+    # ============================
     # LIST CHECK
-    # ==================================================
-    list_match = re.search(r"(\w+)\s*=\s*\[.*?\]", code)
-
-    if list_match:
-        results["list"].append(("✔ List detected", "success"))
-
-        list_var = list_match.group(1)
-        list_text = list_match.group()
-
-        if list_text.count(",") < 1:
+    # ============================
+    for i, line in enumerate(lines):
+        list_match = re.match(r"\s*(\w+)\s*=\s*\[.*\]", line)
+        if list_match:
+            list_name = list_match.group(1)
             results["list"].append(
-                ("⚠ List appears to contain only one item. Lists should manage multiple related values.", "warning")
+                (f"✔ List '{list_name}' declared on line {i+1}", "success")
             )
 
-        if list_var + "[" in code or f"for " in code and list_var in code:
-            results["list"].append(
-                ("✔ List appears to be used in the program", "success")
-            )
-        else:
-            results["list"].append(
-                ("⚠ List is declared but does not appear to be used.", "warning")
-            )
-
-    else:
+    if not results["list"]:
         results["list"].append(
-            ("⚠ No list detected. You must use a list to manage complexity.", "warning")
+            ("⚠ No lists detected. You must use a list to manage complexity.", "warning")
         )
 
-    # ==================================================
+    # ============================
     # INPUT CHECK
-    # ==================================================
-    if "input(" in code:
-        results["input"].append(
-            ("✔ User input detected using input()", "success")
-        )
-    else:
+    # ============================
+    input_found = False
+    for i, line in enumerate(lines):
+        if "input(" in line:
+            input_found = True
+            results["input"].append(
+                (f"✔ input() found on line {i+1}", "success")
+            )
+
+    if not input_found:
         results["input"].append(
             ("⚠ No user input detected using input().", "warning")
         )
 
-    # ==================================================
+    # ============================
     # OUTPUT CHECK
-    # ==================================================
-    if "print(" in code:
-        results["output"].append(
-            ("✔ Output detected using print()", "success")
-        )
-    else:
+    # ============================
+    output_found = False
+    for i, line in enumerate(lines):
+        if "print(" in line:
+            output_found = True
+            results["output"].append(
+                (f"✔ print() found on line {i+1}", "success")
+            )
+
+    if not output_found:
         results["output"].append(
             ("⚠ No output detected using print().", "warning")
         )
